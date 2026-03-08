@@ -1,0 +1,68 @@
+name: Sync PR to Airtable
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Sync pull request to Airtable
+        env:
+          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
+          AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
+          AIRTABLE_TABLE_NAME: Pull Requests
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_STATE: ${{ github.event.pull_request.state }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_UPDATED_AT: ${{ github.event.pull_request.updated_at }}
+        run: |
+          set -e
+
+          TABLE_PATH="${AIRTABLE_TABLE_NAME// /%20}"
+          URL="https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${TABLE_PATH}"
+
+          EXISTING=$(curl -s -G "$URL" \
+            --data-urlencode "filterByFormula={PR Number}=${PR_NUMBER}" \
+            -H "Authorization: Bearer ${AIRTABLE_TOKEN}")
+
+          RECORD_ID=$(echo "$EXISTING" | jq -r '.records[0].id // empty')
+
+          BODY=$(jq -n \
+            --argjson pr_number "$PR_NUMBER" \
+            --arg title "$PR_TITLE" \
+            --arg status "$PR_STATE" \
+            --arg branch "$PR_BRANCH" \
+            --arg author "$PR_AUTHOR" \
+            --arg pr_url "$PR_URL" \
+            --arg last_updated "$PR_UPDATED_AT" \
+            '{
+              fields: {
+                "PR Number": $pr_number,
+                "Title": $title,
+                "Status": $status,
+                "Branch": $branch,
+                "Author": $author,
+                "PR URL": $pr_url,
+                "Last Updated": $last_updated
+              }
+            }')
+
+          if [ -n "$RECORD_ID" ]; then
+            echo "Updating Airtable record: $RECORD_ID"
+            curl -s -X PATCH "$URL/$RECORD_ID" \
+              -H "Authorization: Bearer ${AIRTABLE_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "$BODY"
+          else
+            echo "Creating Airtable record"
+            curl -s -X POST "$URL" \
+              -H "Authorization: Bearer ${AIRTABLE_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "$BODY"
+          fi
