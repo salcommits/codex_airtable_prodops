@@ -9,6 +9,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Ensure jq is installed
+        run: sudo apt-get update && sudo apt-get install -y jq
+
       - name: Sync pull request to Airtable
         env:
           AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
@@ -22,12 +25,17 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
           PR_UPDATED_AT: ${{ github.event.pull_request.updated_at }}
         run: |
-          set -e
+          set -euo pipefail
+
+          if [ -z "${AIRTABLE_TOKEN}" ] || [ -z "${AIRTABLE_BASE_ID}" ]; then
+            echo "Missing AIRTABLE_TOKEN or AIRTABLE_BASE_ID secret."
+            exit 1
+          fi
 
           TABLE_PATH="${AIRTABLE_TABLE_NAME// /%20}"
           URL="https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${TABLE_PATH}"
 
-          EXISTING=$(curl -s -G "$URL" \
+          EXISTING=$(curl --fail-with-body -sS -G "$URL" \
             --data-urlencode "filterByFormula={PR Number}=${PR_NUMBER}" \
             -H "Authorization: Bearer ${AIRTABLE_TOKEN}")
 
@@ -55,13 +63,13 @@ jobs:
 
           if [ -n "$RECORD_ID" ]; then
             echo "Updating Airtable record: $RECORD_ID"
-            curl -s -X PATCH "$URL/$RECORD_ID" \
+            curl --fail-with-body -sS -X PATCH "$URL/$RECORD_ID" \
               -H "Authorization: Bearer ${AIRTABLE_TOKEN}" \
               -H "Content-Type: application/json" \
               --data "$BODY"
           else
             echo "Creating Airtable record"
-            curl -s -X POST "$URL" \
+            curl --fail-with-body -sS -X POST "$URL" \
               -H "Authorization: Bearer ${AIRTABLE_TOKEN}" \
               -H "Content-Type: application/json" \
               --data "$BODY"
