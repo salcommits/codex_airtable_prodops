@@ -16,7 +16,7 @@ jobs:
         env:
           AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
           AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
-          AIRTABLE_TABLE_NAME: Pull Requests
+          AIRTABLE_TABLE_ID: tblNAmdvanNvAnjyV
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_STATE: ${{ github.event.pull_request.state }}
@@ -32,8 +32,7 @@ jobs:
             exit 1
           fi
 
-          TABLE_PATH="${AIRTABLE_TABLE_NAME// /%20}"
-          URL="https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${TABLE_PATH}"
+          URL="https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE_ID}"
 
           EXISTING=$(curl --fail-with-body -sS -G "$URL" \
             --data-urlencode "filterByFormula={PR Number}=${PR_NUMBER}" \
