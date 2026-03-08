@@ -9,11 +9,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Ensure jq is installed
+        run: sudo apt-get update && sudo apt-get install -y jq
+
       - name: Sync pull request to Airtable
         env:
           AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
           AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
-          AIRTABLE_TABLE_NAME: Pull Requests
+          AIRTABLE_TABLE_ID: tblNAmdvanNvAnjyV
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_STATE: ${{ github.event.pull_request.state }}
@@ -22,21 +25,64 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
           PR_UPDATED_AT: ${{ github.event.pull_request.updated_at }}
         run: |
-          set -e
+          set -euo pipefail
 
-          TABLE_PATH="${AIRTABLE_TABLE_NAME// /%20}"
-          URL="https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${TABLE_PATH}"
+          if [ -z "${AIRTABLE_TOKEN}" ] || [ -z "${AIRTABLE_BASE_ID}" ]; then
+            echo "Missing AIRTABLE_TOKEN or AIRTABLE_BASE_ID secret."
+            exit 1
+          fi
 
-          EXISTING=$(curl -s -G "$URL" \
-            --data-urlencode "filterByFormula={PR Number}=${PR_NUMBER}" \
-            -H "Authorization: Bearer ${AIRTABLE_TOKEN}")
+          URL="https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE_ID}"
 
-          RECORD_ID=$(echo "$EXISTING" | jq -r '.records[0].id // empty')
+          case "$PR_STATE" in
+            open) STATUS_VALUE="Open" ;;
+            closed) STATUS_VALUE="Closed" ;;
+            *) STATUS_VALUE="$PR_STATE" ;;
+          esac
+
+          airtable_request() {
+            local method="$1"
+            local endpoint="$2"
+            local data="${3:-}"
+            local response
+            local code
+            local body
+
+            if [ -n "$data" ]; then
+              response=$(curl -sS -w '\n%{http_code}' -X "$method" "$endpoint" \
+                -H "Authorization: Bearer ${AIRTABLE_TOKEN}" \
+                -H "Content-Type: application/json" \
+                --data "$data")
+            else
+              response=$(curl -sS -w '\n%{http_code}' -X "$method" "$endpoint" \
+                -H "Authorization: Bearer ${AIRTABLE_TOKEN}")
+            fi
+
+            code=$(echo "$response" | tail -n1)
+            body=$(echo "$response" | sed '$d')
+
+            if [ "$code" -ge 400 ]; then
+              echo "Airtable API error (HTTP $code):" >&2
+              echo "$body" >&2
+              return 1
+            fi
+
+            echo "$body"
+          }
+
+          # Pull a page of records and match PR number in jq to avoid formula-related 422s.
+          EXISTING=$(airtable_request GET "${URL}?pageSize=100")
+
+          RECORD_ID=$(echo "$EXISTING" | jq -r --arg pr_number "$PR_NUMBER" '
+            (.records // [])
+            | map(select((.fields["PR Number"] | tostring) == $pr_number))
+            | .[0].id // empty
+          ')
 
           BODY=$(jq -n \
             --argjson pr_number "$PR_NUMBER" \
             --arg title "$PR_TITLE" \
-            --arg status "$PR_STATE" \
+            --arg status "$STATUS_VALUE" \
             --arg branch "$PR_BRANCH" \
             --arg author "$PR_AUTHOR" \
             --arg pr_url "$PR_URL" \
@@ -55,14 +101,8 @@ jobs:
 
           if [ -n "$RECORD_ID" ]; then
             echo "Updating Airtable record: $RECORD_ID"
-            curl -s -X PATCH "$URL/$RECORD_ID" \
-              -H "Authorization: Bearer ${AIRTABLE_TOKEN}" \
-              -H "Content-Type: application/json" \
-              --data "$BODY"
+            airtable_request PATCH "$URL/$RECORD_ID" "$BODY" | jq -r '.id' >/dev/null
           else
             echo "Creating Airtable record"
-            curl -s -X POST "$URL" \
-              -H "Authorization: Bearer ${AIRTABLE_TOKEN}" \
-              -H "Content-Type: application/json" \
-              --data "$BODY"
+            airtable_request POST "$URL" "$BODY" | jq -r '.id' >/dev/null
           fi
