@@ -34,11 +34,44 @@ jobs:
 
           URL="https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE_ID}"
 
-          EXISTING=$(curl --fail-with-body -sS -G "$URL" \
-            --data-urlencode "filterByFormula={PR Number}=${PR_NUMBER}" \
-            -H "Authorization: Bearer ${AIRTABLE_TOKEN}")
+          airtable_request() {
+            local method="$1"
+            local endpoint="$2"
+            local data="${3:-}"
+            local response
+            local code
+            local body
 
-          RECORD_ID=$(echo "$EXISTING" | jq -r '.records[0].id // empty')
+            if [ -n "$data" ]; then
+              response=$(curl -sS -w '\n%{http_code}' -X "$method" "$endpoint" \
+                -H "Authorization: Bearer ${AIRTABLE_TOKEN}" \
+                -H "Content-Type: application/json" \
+                --data "$data")
+            else
+              response=$(curl -sS -w '\n%{http_code}' -X "$method" "$endpoint" \
+                -H "Authorization: Bearer ${AIRTABLE_TOKEN}")
+            fi
+
+            code=$(echo "$response" | tail -n1)
+            body=$(echo "$response" | sed '$d')
+
+            if [ "$code" -ge 400 ]; then
+              echo "Airtable API error (HTTP $code):"
+              echo "$body"
+              return 1
+            fi
+
+            echo "$body"
+          }
+
+          # Pull a page of records and match PR number in jq to avoid formula-related 422s.
+          EXISTING=$(airtable_request GET "${URL}?pageSize=100")
+
+          RECORD_ID=$(echo "$EXISTING" | jq -r --arg pr_number "$PR_NUMBER" '
+            (.records // [])
+            | map(select((.fields["PR Number"] | tostring) == $pr_number))
+            | .[0].id // empty
+          ')
 
           BODY=$(jq -n \
             --argjson pr_number "$PR_NUMBER" \
@@ -62,14 +95,8 @@ jobs:
 
           if [ -n "$RECORD_ID" ]; then
             echo "Updating Airtable record: $RECORD_ID"
-            curl --fail-with-body -sS -X PATCH "$URL/$RECORD_ID" \
-              -H "Authorization: Bearer ${AIRTABLE_TOKEN}" \
-              -H "Content-Type: application/json" \
-              --data "$BODY"
+            airtable_request PATCH "$URL/$RECORD_ID" "$BODY" >/dev/null
           else
             echo "Creating Airtable record"
-            curl --fail-with-body -sS -X POST "$URL" \
-              -H "Authorization: Bearer ${AIRTABLE_TOKEN}" \
-              -H "Content-Type: application/json" \
-              --data "$BODY"
+            airtable_request POST "$URL" "$BODY" >/dev/null
           fi
