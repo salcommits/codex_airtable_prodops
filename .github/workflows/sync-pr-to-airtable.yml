@@ -34,6 +34,12 @@ jobs:
 
           URL="https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE_ID}"
 
+          case "$PR_STATE" in
+            open) STATUS_VALUE="Open" ;;
+            closed) STATUS_VALUE="Closed" ;;
+            *) STATUS_VALUE="$PR_STATE" ;;
+          esac
+
           airtable_request() {
             local method="$1"
             local endpoint="$2"
@@ -76,7 +82,7 @@ jobs:
           BODY=$(jq -n \
             --argjson pr_number "$PR_NUMBER" \
             --arg title "$PR_TITLE" \
-            --arg status "$PR_STATE" \
+            --arg status "$STATUS_VALUE" \
             --arg branch "$PR_BRANCH" \
             --arg author "$PR_AUTHOR" \
             --arg pr_url "$PR_URL" \
