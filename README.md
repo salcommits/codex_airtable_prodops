@@ -4,6 +4,7 @@ Test change: PR flow validation on March 8, 2026.
 Sync trigger: tiny update on March 8, 2026.
 Sync trigger: follow-up update on March 8, 2026.
 Sync trigger: token-permission retest on March 8, 2026.
+Sync trigger: status-option mapping retest on March 8, 2026.
 
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
